@@ -760,9 +760,22 @@ pub enum PerfEventType {
         /// Cookie value for the kprobe.
         cookie: u64,
     },
+    /// A uprobe event (includes both uprobe and uretprobe).
+    Uprobe {
+        /// The absolute file path of the binary being probed.
+        file_name: Option<CString>,
+        /// Whether this is a return probe (uretprobe).
+        is_retprobe: bool,
+        /// Offset from the binary.
+        offset: u32,
+        /// Cookie value for the uprobe.
+        cookie: u64,
+        // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
+        // /// Offset of kernel reference counted USDT semaphore.
+        // ref_ctr_offset: u64,
+    },
     /// An unknown or unsupported perf event type.
-    // TODO: Add support for `BPF_PERF_EVENT_EVENT`, `BPF_PERF_EVENT_UPROBE`
-    // `BPF_PERF_EVENT_URETPROBE`
+    // TODO: Add support for `BPF_PERF_EVENT_EVENT`
     Unknown(u32),
 }
 
@@ -939,10 +952,10 @@ impl LinkInfo {
 
                 // Handle two-phase call for perf event string data if needed (this mimics the
                 // behavior of bpftool):
-                // For tracepoints and kprobes, we need to pass in a buffer to get the name. So
-                // we initialize the struct with a buffer pointer, and call `bpf_obj_get_info_by_fd`
-                // again to populate the name.
-                let mut buf = [0u8; 256];
+                // For tracepoints, kprobes, and uprobes, we need to pass in a buffer to get the
+                // name. So we initialize the struct with a buffer pointer, and call
+                // `bpf_obj_get_info_by_fd` again to populate the name.
+                let mut buf = [0u8; libc::PATH_MAX as usize];
                 let call_get_info_again = match bpf_perf_event_type {
                     libbpf_sys::BPF_PERF_EVENT_TRACEPOINT => {
                         s.__bindgen_anon_1
@@ -967,6 +980,19 @@ impl LinkInfo {
                             .perf_event
                             .__bindgen_anon_1
                             .kprobe
+                            .name_len = buf.len() as u32;
+                        true
+                    }
+                    libbpf_sys::BPF_PERF_EVENT_UPROBE | libbpf_sys::BPF_PERF_EVENT_URETPROBE => {
+                        s.__bindgen_anon_1
+                            .perf_event
+                            .__bindgen_anon_1
+                            .uprobe
+                            .file_name = buf.as_mut_ptr() as u64;
+                        s.__bindgen_anon_1
+                            .perf_event
+                            .__bindgen_anon_1
+                            .uprobe
                             .name_len = buf.len() as u32;
                         true
                     }
@@ -1039,6 +1065,25 @@ impl LinkInfo {
                             offset,
                             missed,
                             cookie,
+                        }
+                    }
+                    libbpf_sys::BPF_PERF_EVENT_UPROBE | libbpf_sys::BPF_PERF_EVENT_URETPROBE => {
+                        // SAFETY: Union access is valid.
+                        let uprobe =
+                            unsafe { s.__bindgen_anon_1.perf_event.__bindgen_anon_1.uprobe };
+                        // SAFETY: `file_name_ptr` is a valid nul terminator pointer.
+                        let file_name = (uprobe.file_name != 0).then(|| unsafe {
+                            CStr::from_ptr(uprobe.file_name as *const c_char).to_owned()
+                        });
+
+                        PerfEventType::Uprobe {
+                            file_name,
+                            is_retprobe: bpf_perf_event_type
+                                == libbpf_sys::BPF_PERF_EVENT_URETPROBE,
+                            offset: uprobe.offset,
+                            cookie: uprobe.cookie,
+                            // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
+                            // ref_ctr_offset: uprobe.ref_ctr_offset,
                         }
                     }
                     ty => PerfEventType::Unknown(ty),
