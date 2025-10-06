@@ -13,9 +13,11 @@ use std::fs;
 use std::hint;
 use std::io;
 use std::io::Read;
+use std::mem;
 use std::mem::size_of;
 use std::mem::size_of_val;
 use std::os::unix::io::AsFd;
+use std::os::unix::io::RawFd;
 use std::path::Path;
 use std::path::PathBuf;
 use std::ptr;
@@ -41,6 +43,7 @@ use libbpf_rs::MapInfo;
 use libbpf_rs::MapType;
 use libbpf_rs::Object;
 use libbpf_rs::ObjectBuilder;
+use libbpf_rs::PerfEventOpts;
 use libbpf_rs::Program;
 use libbpf_rs::ProgramInput;
 use libbpf_rs::ProgramType;
@@ -2142,6 +2145,106 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
     //     ref_ctr_offset,
     //     uretprobe_opts.ref_ctr_offset.try_into().unwrap()
     // );
+}
+
+/// Test that `perf_event` link info is properly parsed for perf event.
+#[tag(root)]
+#[test]
+fn test_perf_event_link_info_event() {
+    // Load perf_event program
+    let mut obj = get_test_object("perf_event.bpf.o");
+    let prog = get_prog_mut(&mut obj, "handle__perf_event");
+
+    // Helper function for attaching perf_event with given opts and return the link info
+    let attach_and_get_link_info = |event_type: u32, config: u64, cookie: u64| -> (u64, u32, u64) {
+        // Open perf_event with the given params
+        // SAFETY: `perf_event_attr` is a valid struct to zero-initialize.
+        let mut attr = unsafe { mem::zeroed::<libbpf_sys::perf_event_attr>() };
+        attr.type_ = event_type;
+        attr.size = size_of::<libbpf_sys::perf_event_attr>() as u32;
+        attr.config = config;
+        attr.disabled();
+        // pid = 0, cpu = -1, group_fd = -1, flags = 0
+        // SAFETY: `perf_event_open` is a valid syscall with the proper args.
+        let pfd_raw = match unsafe { libc::syscall(libc::SYS_perf_event_open, &attr, 0, -1, -1, 0) }
+        {
+            fd_raw @ 0.. => fd_raw as RawFd,
+            _ => panic!(
+                "`perf_event_open` syscall failed: {:?}",
+                io::Error::last_os_error()
+            ),
+        };
+
+        let opts = PerfEventOpts {
+            cookie,
+            ..Default::default()
+        };
+        // The link gets ownership of `pfd`, so if link is dropped, `pfd` also gets dropped even if
+        // `pfd` is an `OwnedFd`. This can cause "owned file descriptor already closed" error if
+        // not careful with the fd ownership.
+        // The link can release ownership of `pfd` through `.disconnect()`.
+        let link = prog
+            .attach_perf_event_with_opts(pfd_raw, opts)
+            .expect("failed to attach perf_event");
+
+        let link_info = link.info().expect("failed to get perf_event link info");
+        let LinkTypeInfo::PerfEvent(perf_info) = link_info.info else {
+            panic!(
+                "Expected LinkTypeInfo::PerfEvent for perf_event, got: {:?}",
+                link_info.info
+            );
+        };
+        let PerfEventType::Event {
+            config,
+            event_type,
+            cookie,
+        } = perf_info.event_type
+        else {
+            panic!(
+                "Expected PerfEventType::PerfEvent, got: {:?}",
+                perf_info.event_type
+            );
+        };
+        (config, event_type, cookie)
+    };
+
+    // A lot of param combinations can be tested and some depend on what the host supports, so this
+    // only tests a few just for proper parsing.
+
+    // Test perf_event link info with `PERF_TYPE_HARDWARE`.
+    let type_hw = libbpf_sys::PERF_TYPE_HARDWARE;
+    let config_cache_misses = libbpf_sys::PERF_COUNT_HW_CACHE_MISSES as u64;
+    let cookie_hw = 5;
+    let (config, event_type, cookie) =
+        attach_and_get_link_info(type_hw, config_cache_misses, cookie_hw);
+
+    assert_eq!(event_type, type_hw);
+    assert_eq!(config, config_cache_misses);
+    assert_eq!(cookie, cookie_hw);
+
+    // Test perf_event link info with `PERF_TYPE_SOFTWARE`.
+    let type_sw = libbpf_sys::PERF_TYPE_SOFTWARE;
+    let config_dummy = libbpf_sys::PERF_COUNT_SW_DUMMY as u64;
+    let cookie_sw = 3;
+    let (config, event_type, cookie) = attach_and_get_link_info(type_sw, config_dummy, cookie_sw);
+
+    assert_eq!(event_type, type_sw);
+    assert_eq!(config, config_dummy);
+    assert_eq!(cookie, cookie_sw);
+
+    // Test perf_event link info with `PERF_TYPE_HW_CACHE`.
+    let type_hw_cache = libbpf_sys::PERF_TYPE_HW_CACHE;
+    let id = libbpf_sys::PERF_COUNT_HW_CACHE_BPU;
+    let op_id = libbpf_sys::PERF_COUNT_HW_CACHE_OP_READ;
+    let op_result_id = libbpf_sys::PERF_COUNT_HW_CACHE_RESULT_MISS;
+    let config_hw_cache = (id | (op_id << 8) | (op_result_id << 16)) as u64;
+    let cookie_hw_cache = 23;
+    let (config, event_type, cookie) =
+        attach_and_get_link_info(type_hw_cache, config_hw_cache, cookie_hw_cache);
+
+    assert_eq!(event_type, type_hw_cache);
+    assert_eq!(config, config_hw_cache);
+    assert_eq!(cookie, cookie_hw_cache);
 }
 
 /// Get access to the underlying per-cpu ring buffer data.
