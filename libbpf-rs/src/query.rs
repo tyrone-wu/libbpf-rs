@@ -770,9 +770,8 @@ pub enum PerfEventType {
         offset: u32,
         /// Cookie value for the uprobe.
         cookie: u64,
-        // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-        // /// Offset of kernel reference counted USDT semaphore.
-        // ref_ctr_offset: u64,
+        /// Offset of kernel reference counted USDT semaphore.
+        ref_ctr_offset: u64,
     },
     /// A perf event.
     Event {
@@ -1090,8 +1089,7 @@ impl LinkInfo {
                                 == libbpf_sys::BPF_PERF_EVENT_URETPROBE,
                             offset: uprobe.offset,
                             cookie: uprobe.cookie,
-                            // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-                            // ref_ctr_offset: uprobe.ref_ctr_offset,
+                            ref_ctr_offset: uprobe.ref_ctr_offset,
                         }
                     }
                     libbpf_sys::BPF_PERF_EVENT_EVENT => {

@@ -154,8 +154,7 @@ fn link() {
                     is_retprobe,
                     offset,
                     cookie,
-                    // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-                    // ref_ctr_offset,
+                    ref_ctr_offset,
                 } => {
                     let probe_type = if is_retprobe { "uretprobe" } else { "uprobe" };
                     let file_name = file_name.as_ref().map(|s| s.to_string_lossy());
@@ -170,10 +169,9 @@ fn link() {
                     if cookie != 0 {
                         print!(" cookie={cookie}");
                     }
-                    // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-                    // if ref_ctr_offset != 0 {
-                    //     print!(" ref_ctr_offset={ref_ctr_offset}");
-                    // }
+                    if ref_ctr_offset != 0 {
+                        print!(" ref_ctr_offset={ref_ctr_offset}");
+                    }
                 }
                 query::PerfEventType::Event {
                     config,

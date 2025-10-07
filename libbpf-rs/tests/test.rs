@@ -2066,7 +2066,7 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
 
     // Helper function for attaching uprobe with given opts and return the link info
     let attach_and_get_link_info =
-        |offset: usize, opts: &UprobeOpts| -> (Option<CString>, bool, u32, u64) {
+        |offset: usize, opts: &UprobeOpts| -> (Option<CString>, bool, u32, u64, u64) {
             let link = prog
                 .attach_uprobe_with_opts(pid, &curr_exe_path, offset, opts.clone())
                 .expect("failed to attach uprobe");
@@ -2083,8 +2083,7 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
                 is_retprobe,
                 offset,
                 cookie,
-                // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-                // ref_ctr_offset,
+                ref_ctr_offset,
             } = perf_info.event_type
             else {
                 panic!(
@@ -2092,7 +2091,7 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
                     perf_info.event_type
                 );
             };
-            (file_name, is_retprobe, offset, cookie)
+            (file_name, is_retprobe, offset, cookie, ref_ctr_offset)
         };
 
     // Attach uprobe with only function name
@@ -2103,7 +2102,8 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
         retprobe: false,
         ..Default::default()
     };
-    let (file_name, is_retprobe, offset, cookie) = attach_and_get_link_info(0, &uprobe_opts);
+    let (file_name, is_retprobe, offset, cookie, ref_ctr_offset) =
+        attach_and_get_link_info(0, &uprobe_opts);
 
     // Test uprobe link info
     let name = file_name.expect("uprobe should have a file name");
@@ -2114,11 +2114,10 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
     );
     assert_eq!(offset, uprobe_target_offset as u32);
     assert_eq!(cookie, uprobe_opts.cookie);
-    // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-    // assert_eq!(
-    //     ref_ctr_offset,
-    //     uprobe_opts.ref_ctr_offset.try_into().unwrap()
-    // );
+    assert_eq!(
+        ref_ctr_offset,
+        uprobe_opts.ref_ctr_offset.try_into().unwrap()
+    );
 
     // Attach uretprobe with only offset
     let uretprobe_opts = UprobeOpts {
@@ -2128,7 +2127,7 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
         retprobe: true,
         ..Default::default()
     };
-    let (file_name, is_retprobe, offset, cookie) =
+    let (file_name, is_retprobe, offset, cookie, ref_ctr_offset) =
         attach_and_get_link_info(uprobe_target_offset, &uretprobe_opts);
 
     // Test uretprobe link info
@@ -2140,11 +2139,10 @@ fn test_perf_event_link_info_uprobe_uretprobe() {
     );
     assert_eq!(offset, uprobe_target_offset as u32);
     assert_eq!(cookie, uretprobe_opts.cookie);
-    // TODO: Add `ref_ctr_offset` back once libbpf-sys >= 1.6.0
-    // assert_eq!(
-    //     ref_ctr_offset,
-    //     uretprobe_opts.ref_ctr_offset.try_into().unwrap()
-    // );
+    assert_eq!(
+        ref_ctr_offset,
+        uretprobe_opts.ref_ctr_offset.try_into().unwrap()
+    );
 }
 
 /// Test that `perf_event` link info is properly parsed for perf event.
